@@ -1,0 +1,280 @@
+--- @class DiffusionSystem : System
+local DiffusionSystem = prism.System:extend("DiffusionSystem")
+
+local function lookupExistingGas(x, y, gasLookup, gasData)
+	local existingActor = nil
+	if gasLookup[x] and gasLookup[x][y] then
+		local index = gasLookup[x][y]
+		existingActor = gasData[index].actor
+	end
+
+	return existingActor
+end
+
+local function applyDamage(level, source, target, damage)
+	if not target:has(prism.components.Impermeable) then
+		local damageAction = prism.actions.Damage(source, target, damage)
+
+		local canPerform, error = level:canPerform(damageAction)
+		if canPerform then
+			level:perform(damageAction)
+		end
+	end
+end
+
+--- @param level Level
+--- @param curGasType "poison" | "fire" | "smoke" | "fuel" type of gas to diffuse, must be a key in GAS_TYPES
+local function diffuseGasType(level, curGasType)
+	local params = GAS_TYPES[curGasType]
+
+	-- Extract gas data from actors into simple arrays
+	local gasData = {} -- array of {x, y, volume, actor}
+	local gasLookup = {} -- lookup table: gasLookup[x][y] = index in gasData
+
+	local gasActors = level:query(prism.components.Gas):gather()
+
+	-- Extract data from matching gas actors
+	for _, gasA in ipairs(gasActors) do
+		--- @type Gas
+		local gasC = gasA:get(prism.components.Gas)
+
+		if gasC.type == curGasType then
+			local x, y = gasA:getPosition():decompose()
+
+			-- Check if we already have gas at this position
+			if gasLookup[x] and gasLookup[x][y] then
+				-- Accumulate volume into existing entry
+				local existingIndex = gasLookup[x][y]
+				gasData[existingIndex].volume = gasData[existingIndex].volume + gasC.volume
+				-- Remove this duplicate actor
+				level:removeActor(gasA)
+			else
+				-- Create new entry for this position
+				local gasEntry = {
+					x = x,
+					y = y,
+					volume = gasC.volume,
+					actor = gasA,
+				}
+
+				table.insert(gasData, gasEntry)
+
+				-- Build lookup table
+				if not gasLookup[x] then
+					gasLookup[x] = {}
+				end
+				gasLookup[x][y] = #gasData
+			end
+		end
+	end
+
+	-- Process diffusion with simple data structures
+	local newGasData = {} -- array of {x, y, volume}
+	local newGasLookup = {} -- lookup table for new gas positions
+
+	local function addToNewGas(x, y, volume)
+		if not newGasLookup[x] then
+			newGasLookup[x] = {}
+		end
+
+		if newGasLookup[x][y] then
+			local index = newGasLookup[x][y]
+			newGasData[index].volume = newGasData[index].volume + volume
+		else
+			local newEntry = { x = x, y = y, volume = volume }
+			table.insert(newGasData, newEntry)
+			newGasLookup[x][y] = #newGasData
+		end
+	end
+
+	-- Compute diffusion for each gas cell
+	for _, gas in ipairs(gasData) do
+		local x, y, volume = gas.x, gas.y, gas.volume
+
+		-- Keep some gas at current position
+		addToNewGas(x, y, params.keepRatio * volume)
+
+		-- Spread to neighbors
+		for _, neighbor in ipairs(prism.neighborhood) do
+			local nx, ny = x + neighbor.x, y + neighbor.y
+
+			if level:inBounds(nx, ny) and not level:getCell(nx, ny):has(prism.components.Impermeable) then
+				addToNewGas(nx, ny, params.spreadRadio * volume)
+			else
+				-- if you can't spread, increase this cell's amount
+				addToNewGas(x, y, params.spreadRadio * volume)
+
+				-- if we have spread damage, apply it here.
+				if params.spreadDamage then
+					local entitiesAtTarget = level:query():at(nx, ny):gather()
+					local cellAtTarget = level:getCell(nx, ny)
+					local gasSourceEntity = lookupExistingGas(x, y, gasLookup, gasData)
+
+					-- add cells at the target, too.
+					if cellAtTarget then
+						table.insert(entitiesAtTarget, cellAtTarget)
+					end
+
+					for _, e in ipairs(entitiesAtTarget) do
+						if params.spreadDamage and e:has(prism.components.Health) then
+							applyDamage(level, gasSourceEntity, e, params.spreadDamage)
+						end
+					end
+				end
+			end
+		end
+	end
+
+	-- Handle gas emitters
+	for entity in level:query(prism.components.GasEmitter):iter() do
+		local emitter = entity:expect(prism.components.GasEmitter)
+
+		-- a little odd to do this inside the gas types
+		if emitter.gas == curGasType and not emitter.disabled then
+			if emitter.turns % emitter.period == 0 then
+				for _, vec in ipairs(emitter.template) do
+					for i = 1, emitter.direction do
+						vec = vec:rotateClockwise()
+					end
+					local pos = entity:getPosition() + vec
+
+					if
+						level:inBounds(pos:decompose())
+						and not level:getCell(pos:decompose()):has(prism.components.Impermeable)
+					then
+						addToNewGas(pos.x, pos.y, emitter.volume)
+					end
+				end
+			end
+
+			emitter.turns = emitter.turns + 1
+
+			if emitter.duration > 0 and emitter.turns > emitter.duration then
+				-- reset, don't remove.
+				emitter.turns = 0
+				emitter.disabled = true
+			end
+		end
+	end
+
+	-- Apply reduction and reconcile with world
+	for _, newGasEntry in ipairs(newGasData) do
+		local x, y = newGasEntry.x, newGasEntry.y
+		local volume = newGasEntry.volume * params.reduceRatio
+
+		-- Find existing actor at this position
+		local existingActor = lookupExistingGas(x, y, gasLookup, gasData)
+		-- prism.logger.info("volume: ", volume, x, y, " prior: ", newGasEntry.volume)
+		if not volume or volume <= params.minimumVolume then
+			-- Remove existing actor if volume too low
+			if existingActor then
+				level:removeActor(existingActor)
+			end
+		else
+			-- Update or create actor
+			--- @type Actor
+			local gasActor = nil
+			if existingActor then
+				gasActor = existingActor
+				local gasC = existingActor:get(prism.components.Gas)
+				gasC.volume = volume
+			else
+				-- TODO fix this by making gases a proper object. See Discord example.
+				gasActor = params.factory(volume)
+				level:addActor(gasActor, x, y)
+			end
+
+			---@type Entity[]
+			local entitiesAtTarget = level:query():at(x, y):gather()
+			local tile = level:getCell(x, y)
+			if tile then
+				table.insert(entitiesAtTarget, tile)
+			end
+
+			for _, entity in ipairs(entitiesAtTarget) do
+				if entity ~= gasActor then
+					if entity:has(prism.components.Health) then
+						applyDamage(level, gasActor, entity, params.cellDamage)
+					end
+				end
+			end
+		end
+	end
+
+	-- Remove any actors that weren't updated (no longer have gas)
+	for _, gasEntry in ipairs(gasData) do
+		local x, y = gasEntry.x, gasEntry.y
+		local wasUpdated = newGasLookup[x]
+			and newGasLookup[x][y]
+			and newGasData[newGasLookup[x][y]].volume > params.minimumVolume
+
+		if not wasUpdated then
+			level:removeActor(gasEntry.actor)
+		end
+	end
+
+	for _, gasA in ipairs(level:query(prism.components.Gas):gather()) do
+		local gasC = gasA:get(prism.components.Gas)
+		local drawable = gasA:get(prism.components.Drawable)
+
+		if drawable and gasC and gasC.type == curGasType then
+			if gasC.volume > params.threshold then
+				drawable.background = params.bgFull
+
+				if curGasType == "smoke" then
+					gasA:give(prism.components.Opaque())
+				end
+			else
+				drawable.background = params.bgFading
+
+				-- not sure how shove this into the params. I could put a post-processed callback, I guess. If I get more stuff I want to do in this phase I can double back and abstract it.
+				if gasA:has(prism.components.Opaque) and curGasType == "smoke" then
+					gasA:remove(prism.components.Opaque)
+				end
+			end
+		end
+	end
+end
+
+function DiffusionSystem:onTurnEnd(level, actor)
+	-- run after the player has acted, effectively once per "loop" of the
+	-- actors in the level.
+	if not actor:has(prism.components.PlayerController) then
+		return
+	end
+
+	for curGasType, _ in pairs(GAS_TYPES) do
+		diffuseGasType(level, curGasType)
+	end
+
+	-- now, do a check for fire type gas in the same cells as poison type gas anyDown
+	-- replace.
+
+	for _, gasEntity in ipairs(level:query(prism.components.Gas):gather()) do
+		local gasC = gasEntity:expect(prism.components.Gas)
+
+		if gasC.type == "fire" then
+			local allGasInCell = level:query(prism.components.Gas):at(gasEntity:getPosition():decompose()):gather()
+
+			local foundSpreadTarget = false
+			for _, gasEntityInCell in ipairs(allGasInCell) do
+				local cellGasC = gasEntityInCell:expect(prism.components.Gas)
+
+				if cellGasC.type == "fuel" then
+					-- power up the fire gas from the poison gas
+					gasC.volume = cellGasC.volume
+
+					-- delete the poison gas
+					level:removeActor(gasEntityInCell)
+					foundSpreadTarget = true
+				end
+			end
+
+			if not foundSpreadTarget then
+				level:removeActor(gasEntity)
+			end
+		end
+	end
+end
+
+return DiffusionSystem

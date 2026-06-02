@@ -1,0 +1,10 @@
+prism.register(prism.Component:extend("Wall"))
+prism.registerCell("Wall", function()
+	return prism.Cell.fromComponents({
+		prism.components.Name("Wall"),
+		prism.components.Drawable({ index = "#" }),
+		prism.components.Collider(),
+		prism.components.Opaque(),
+		prism.components.Wall(),
+	})
+end)

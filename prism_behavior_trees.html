@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prism Behavior Trees Documentation</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; margin: 20px; }
+        h1, h2, h3 { color: #333; }
+        code { background-color: #f4f4f4; padding: 2px 4px; border-radius: 4px; }
+        pre { background-color: #f4f4f4; padding: 10px; border-radius: 4px; overflow-x: auto; }
+        .example { border-left: 4px solid #ccc; padding-left: 10px; margin: 10px 0; }
+        ul { padding-left: 20px; }
+    </style>
+</head>
+<body>
+    <h1>Prism Behavior Trees Documentation</h1>
+    <p>This document provides a comprehensive guide to using Behavior Trees in the Prism framework. Behavior Trees are a powerful way to model AI decision-making in games, allowing for modular, reusable, and maintainable AI logic.</p>
+
+    <h2>Overview</h2>
+    <p>Behavior Trees in Prism are composed of nodes that represent tasks, decisions, or composites. Each node returns a status: <code>true</code> (success), <code>false</code> (failure), or an <code>Action</code> object (running task). The tree ticks every frame, evaluating nodes until an Action is returned or the tree completes.</p>
+    <p>Key concepts:</p>
+    <ul>
+        <li><strong>Leaf Nodes:</strong> Perform actions or checks (e.g., move, attack, check conditions).</li>
+        <li><strong>Composite Nodes:</strong> Control execution flow (e.g., Sequence, Selector).</li>
+        <li><strong>Decorators:</strong> Modify node behavior (e.g., Succeeder, Conditional).</li>
+        <li><strong>Root Node:</strong> The entry point of the tree, must return an Action.</li>
+    </ul>
+
+    <h2>Core Components</h2>
+
+    <h3>BehaviorTree.Node</h3>
+    <p>The base class for all nodes. Extend it to create custom behaviors.</p>
+    <pre><code>local MyNode = prism.BehaviorTree.Node:extend("MyNode")
+
+function MyNode:run(level, actor, controller)
+    -- Return true (success), false (failure), or an Action
+    return true
+end</code></pre>
+
+    <h3>BehaviorTree.Root</h3>
+    <p>The root of the tree. Runs children sequentially until one returns an Action, which it then returns. If no Action is found, it errors.</p>
+    <pre><code>prism.BehaviorTree.Root({
+    child1,
+    child2,
+    -- ...
+})</code></pre>
+
+    <h3>BehaviorTree.Sequence</h3>
+    <p>Runs children in order. Succeeds if all children succeed. Fails if any child fails. Returns an Action immediately if a child does.</p>
+    <p>Use for: Chained tasks that must all complete (e.g., find target, then move, then attack).</p>
+    <pre><code>prism.BehaviorTree.Sequence({
+    prism.behaviours.FindTargetBehaviour(),
+    prism.behaviours.MoveBehaviour(),
+    prism.behaviours.AttackBehaviour(),
+})</code></pre>
+
+    <h3>BehaviorTree.Selector</h3>
+    <p>Runs children in order. Succeeds and returns the result of the first child that succeeds. Fails if all children fail.</p>
+    <p>Use for: Fallback options (e.g., try to eat, if no food, hunt).</p>
+    <pre><code>prism.BehaviorTree.Selector({
+    prism.behaviours.EatBehaviour(),
+    prism.behaviours.HuntBehaviour(),
+    prism.behaviours.WaitBehaviour(),
+})</code></pre>
+
+    <h3>BehaviorTree.Succeeder</h3>
+    <p>Always succeeds, regardless of the child's result. Useful for ignoring failures.</p>
+    <pre><code>prism.BehaviorTree.Succeeder(prism.behaviours.RiskyBehaviour())</code></pre>
+
+    <h3>BehaviorTree.Conditional</h3>
+    <p>Runs a condition function. Succeeds if the function returns true, fails otherwise.</p>
+    <pre><code>prism.BehaviorTree.Conditional(function(level, actor, controller)
+    return actor:get(prism.components.Health).current > 50
+end)</code></pre>
+
+    <h2>How Behavior Trees Work</h2>
+    <p>Behavior Trees are evaluated every frame via the <code>BTController</code> component. The tree starts at the Root, which ticks its children. Execution flows based on node types:</p>
+    <ul>
+        <li><strong>Ticking:</strong> Nodes are reevaluated each frame, allowing dynamic behavior.</li>
+        <li><strong>Blackboard:</strong> Use <code>controller.blackboard</code> (short-term) and <code>controller.blackboard.long</code> (long-term) to store state between ticks.</li>
+        <li><strong>Actions:</strong> When a node returns an Action, the tree stops and the Action is executed. Actions represent ongoing tasks.</li>
+    </ul>
+    <p>Example flow:</p>
+    <div class="example">
+        <p>In a Sequence: Check health → If low, find cover → Move to cover. If any step fails, the sequence fails.</p>
+        <p>In a Selector: Try to attack → If no target, flee → If can't flee, wait.</p>
+    </div>
+
+    <h2>Examples</h2>
+
+    <h3>Simple Kobold AI</h3>
+    <p>A kobold that prioritizes hunger, then hunting, otherwise waits.</p>
+    <pre><code>prism.components.BTController(prism.BehaviorTree.Root({
+    prism.BehaviorTree.Selector({
+        -- Hunger Subroutine
+        prism.BehaviorTree.Sequence({
+            prism.behaviours.SatietyBelowPercentageCheckBehaviour(90),
+            prism.behaviours.FindEdibleBehaviour(),
+            prism.BehaviorTree.Selector({
+                prism.BehaviorTree.Sequence({
+                    prism.behaviours.CheckTargetInRangeBehaviour(0),
+                    prism.behaviours.EatBehaviour(),
+                }),
+                prism.behaviours.MoveBehaviour(0),
+            }),
+        }),
+        -- Hunt Subroutine
+        prism.BehaviorTree.Sequence({
+            prism.behaviours.FindEnemyBehaviour(),
+            prism.BehaviorTree.Selector({
+                prism.BehaviorTree.Sequence({
+                    prism.behaviours.CheckRoomTargetBehaviour(),
+                    prism.behaviours.MoveBehaviour(),
+                }),
+                prism.BehaviorTree.Sequence({
+                    prism.behaviours.HPBelowPercentageCheckBehaviour(34),
+                    prism.behaviours.FindNearestRoomNotContainingEnemyBehaviour(),
+                    prism.behaviours.MoveBehaviour(),
+                }),
+                prism.BehaviorTree.Sequence({
+                    prism.behaviours.CheckTargetInRangeBehaviour(1),
+                    prism.behaviours.AttackBehaviour(),
+                }),
+                prism.behaviours.MoveBehaviour(),
+                prism.behaviours.WaitBehaviour(),
+            }),
+        }),
+    }),
+    prism.behaviours.WaitBehaviour(),
+}))</code></pre>
+
+    <h3>Custom Behavior</h3>
+    <p>Create a custom node for patrolling.</p>
+    <pre><code>local PatrolBehaviour = prism.BehaviorTree.Node:extend("PatrolBehaviour")
+
+function PatrolBehaviour:run(level, actor, controller)
+    local path = controller.blackboard.short["patrol_path"]
+    if not path then
+        path = generate_random_path(actor.position)
+        controller.blackboard.short["patrol_path"] = path
+    end
+    if at_end_of_path(actor.position, path) then
+        return true  -- Patrol complete
+    end
+    return prism.actions.MoveAction(path[next_point])
+end</code></pre>
+
+    <h2>Best Practices</h2>
+    <ul>
+        <li><strong>Modularity:</strong> Break complex behaviors into small, reusable nodes. Avoid monolithic trees.</li>
+        <li><strong>Prioritization:</strong> Use Selectors for priority (e.g., survival over aggression). Sequences for required steps.</li>
+        <li><strong>State Management:</strong> Use the blackboard for communication between nodes. Prefer short-term for per-tick data.</li>
+        <li><strong>Performance:</strong> Avoid expensive operations in frequently ticked nodes. Cache results where possible.</li>
+        <li><strong>Debugging:</strong> Log node results during development. Ensure trees don't loop infinitely.</li>
+        <li><strong>Readability:</strong> Use comments to describe subroutines. Consistent indentation and naming.</li>
+        <li><strong>Testing:</strong> Unit test individual nodes. Simulate tree execution with mock actors/levels.</li>
+        <li><strong>Avoid Deep Nesting:</strong> Flatten trees where possible. Use decorators to simplify.</li>
+        <li><strong>Dynamic Behavior:</strong> Leverage senses and components for reactive AI (e.g., sight, hearing).</li>
+        <li><strong>Balance:</strong> Ensure trees don't lead to exploitable or boring behavior. Tune percentages and ranges.</li>
+    </ul>
+
+    <h2>Code Style Guidelines</h2>
+    <ul>
+        <li>Use <code>prism.behaviours</code> for standard behaviors; custom nodes in <code>modules/game/behaviours/</code>.</li>
+        <li>Name nodes descriptively (e.g., <code>FindEnemyBehaviour</code> not <code>FEB</code>).</li>
+        <li>Return consistent types: boolean for checks, Action for tasks.</li>
+        <li>Avoid side effects in run methods; use blackboard or components.</li>
+        <li>Document parameters and return types with EmmyLua comments.</li>
+        <li>Keep nodes stateless; rely on actor components and blackboard.</li>
+    </ul>
+
+    <p>For more examples, refer to existing actors in <code>modules/game/actors/</code>. Contributions to this documentation are welcome via pull requests.</p>
+</body>
+</html></content>
+<parameter name="filePath">prism_behavior_trees.html
