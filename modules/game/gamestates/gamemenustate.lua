@@ -81,6 +81,7 @@ end
 
 function GameMenuState:startNewGame()
 	love.filesystem.remove("save.lz4")
+	Game:pregenerateZones()
 	local builder, rooms = Game:generateNextFloor()
 	self.manager:enter(spectrum.gamestates.GameLevelState(self.display, builder, rooms, Game:getLevelSeed()))
 end

@@ -15,6 +15,7 @@ prism.loadModule("prism/extra/equipment")
 prism.loadModule("prism/extra/droptable")
 
 prism.loadModule("modules/base")
+prism.loadModule("modules/worldsim")
 prism.loadModule("modules/game")
 prism.loadModule("modules/levelgen")
 
