@@ -5,4 +5,4 @@ prism.worldsim = {}
 prism.worldsim.WorldSim = require(basePath .. ".WorldSim")
 prism.worldsim.ZoneRecord = require(basePath .. ".ZoneRecord")
 prism.worldsim.SimSystem = require(basePath .. ".SimSystem")
-prism.worldsim.WanderSimSystem = require(basePath .. ".simsystems.WanderSimSystem")
+prism.registerRegistry("simsystems", prism.worldsim.SimSystem)

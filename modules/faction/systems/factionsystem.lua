@@ -43,7 +43,7 @@ function FactionSystem:linkActorToFactions(level, actor)
 		for factionActor in level:query(prism.components.Faction):iter() do
 			local name = prism.components.Name.get(factionActor)
 			if name == factionName then
-				print("  -> Linking", actor:getName(), "to faction", factionName)
+				--print("  -> Linking", actor:getName(), "to faction", factionName)
 				actor:addRelation(prism.relations.BelongsToFactionRelation, factionActor)
 			end
 		end

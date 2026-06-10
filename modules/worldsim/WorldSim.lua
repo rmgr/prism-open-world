@@ -1,12 +1,10 @@
-local ZoneRecord = require("modules.worldsim.ZoneRecord")
-
 --- @class WorldSim
 --- @field zones SparseGrid              ZoneRecord per world-grid position
 --- @field allActors ActorStorage        Every dormant actor in the world
 --- @field simSystems table              Ordered list of SimSystem instances
 --- @field currentTick integer           Advances once per player action
---- @field zoneX integer
---- @field zoneY integer
+--- @field zoneX integer                 Currently Active Zone X Position
+--- @field zoneY integer                 Currently Active Zone Y Position
 --- @field actorZoneIndex table<Actor, ZoneRecord>
 local WorldSim = prism.Object:extend("WorldSim")
 
@@ -19,23 +17,24 @@ local LANDMARK_SLOTS = {
 	{ x = 7, y = 25 }, -- SW corner area
 }
 
-local LANDMARK_FACTORIES = { "Campsite", "WateringHole", "ForagePatch" }
+local LANDMARK_FACTORIES = { "Campsite", "WateringHole" }
 
 function WorldSim:__new()
 	self.zones = prism.SparseGrid()
 	self.allActors = prism.ActorStorage()
 	self.currentTick = 0
+	self.zoneX = 0
+	self.zoneY = 0
+	self.actorZoneIndex = {}
+
 	self.simSystems = {
-		prism.worldsim.WanderSimSystem(),
+		prism.simsystems.GoalSimSystem(),
 	}
 
 	-- One-time setup for each system, mirroring how a Level initialises Systems.
 	for _, system in ipairs(self.simSystems) do
 		system:initialize(self)
 	end
-	self.zoneX = 0
-	self.zoneY = 0
-	self.actorZoneIndex = {}
 end
 
 --- @param zx integer
@@ -44,7 +43,7 @@ end
 function WorldSim:getOrCreateZone(zx, zy)
 	local record = self.zones:get(zx, zy)
 	if not record then
-		record = ZoneRecord(zx, zy, Game:getZoneSeed(zx, zy))
+		record = prism.worldsim.ZoneRecord(zx, zy, Game:getZoneSeed(zx, zy))
 		self.zones:set(zx, zy, record)
 	end
 	return record
@@ -206,6 +205,69 @@ end
 ---  HELPERS
 --- -------------------------------------------------------------------------
 
+function WorldSim:moveActor(actor, targetZoneX, targetZoneY)
+	local fromZone = self.actorZoneIndex[actor]
+	local toZone = self:getOrCreateZone(targetZoneX, targetZoneY)
+	if not fromZone or not toZone then
+		return
+	end
+
+	fromZone.storage:removeActor(actor)
+	if targetZoneX == self.zoneX and targetZoneY == self.zoneY then
+		local x = 0
+		local y = 0
+		local w, h = Game.level:getSize()
+		if fromZone.zoneX > self.zoneX then
+			--coming from right
+			x = w - 1
+			y = h / 2
+		elseif fromZone.zoneX < self.zoneX then
+			--coming from left
+			x = 0
+			y = h / 2
+		elseif fromZone.zoneY > self.zoneY then
+			--coming from below
+			x = w / 2
+			y = h - 1
+		elseif fromZone.zoneY < self.zoneY then
+			-- coming from top
+			x = w / 2
+			y = 0
+		end
+		x = math.floor(x)
+		y = math.floor(y)
+		Game.level:addActor(actor, x, y)
+	else
+		-- allActors stays in sync: actor is dormant before and after, so it remains
+		-- a member; we only re-point its zone index.
+		actor:give(prism.components.Position(prism.Vector2(16, 16)))
+
+		toZone.storage:addActor(actor)
+	end
+	self.actorZoneIndex[actor] = toZone
+
+	print("moved actor to (" .. targetZoneX .. "," .. targetZoneY .. ")")
+end
+
+function WorldSim:findActor(actor)
+	return self.actorZoneIndex[actor]
+end
+
+function WorldSim:queryAll(component)
+	local results = {}
+	for _, record in self.zones:each() do
+		for actor in record.storage:query(component):iter() do
+			table.insert(results, actor)
+		end
+	end
+	if Game.level then
+		for actor in Game.level:query(component):iter() do
+			table.insert(results, actor)
+		end
+	end
+	return results
+end
+
 --- Build the 31×31 dummy room, then subdivide it with a couple of landmarks
 --- chosen deterministically from the zone seed so they're stable across visits.
 --- @param zoneX integer
@@ -227,41 +289,6 @@ function WorldSim:_buildDummyRoom(zoneX, zoneY, seed)
 	end
 
 	return builder
-end
-
-function WorldSim:moveActor(actor, targetZoneX, targetZoneY)
-	local fromZone = self.actorZoneIndex[actor]
-	local toZone = self:getOrCreateZone(targetZoneX, targetZoneY)
-	if not fromZone or not toZone then
-		return
-	end
-
-	fromZone.storage:removeActor(actor)
-	-- allActors stays in sync: actor is dormant before and after, so it remains
-	-- a member; we only re-point its zone index.
-	actor:give(prism.components.Position(prism.Vector2(16, 16)))
-
-	toZone.storage:addActor(actor)
-	self.actorZoneIndex[actor] = toZone
-end
-
-function WorldSim:findActor(actor)
-	return self.actorZoneIndex[actor]
-end
-
-function WorldSim:queryAll(component)
-	local results = {}
-	for _, record in self.zones:each() do
-		for actor in record.storage:query(component):iter() do
-			table.insert(results, actor)
-		end
-	end
-	if Game.level then
-		for actor in Game.level:query(component):iter() do
-			table.insert(results, actor)
-		end
-	end
-	return results
 end
 
 return WorldSim

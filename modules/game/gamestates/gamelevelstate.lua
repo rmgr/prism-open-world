@@ -148,6 +148,7 @@ function GameLevelState:updateDecision(dt, owner, decision)
 	end
 
 	if controls.wait.pressed then
+		Game.worldSim:advance(Game.worldSim.zoneX, Game.worldSim.zoneY)
 		self:setAction(prism.actions.Wait(owner))
 	end
 end

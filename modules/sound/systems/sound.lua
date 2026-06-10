@@ -99,7 +99,7 @@ function SoundSystem:propagateSound(level)
 		end
 	end
 	local elapsed = os.clock() - start
-	print(elapsed)
+	--print(elapsed)
 end
 
 --- @param level Level

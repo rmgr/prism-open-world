@@ -17,6 +17,8 @@ prism.registerActor("Beetle", function()
 				-- Hunt Subroutine (only actual foes)
 				prism.behaviours.HuntSubroutine(15, 1, 100),
 			}),
+			prism.behaviours.PursueGoalBehaviour(),
+			prism.behaviours.MoveBehaviour(),
 			prism.behaviours.RandomMoveBehaviour(),
 			prism.behaviours.WaitBehaviour(),
 		})),
