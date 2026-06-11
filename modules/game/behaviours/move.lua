@@ -28,7 +28,11 @@ function MoveBehaviour:run(level, actor, controller)
 	if not mover then
 		return false
 	end
-
+	if target.x < 0 or target.x > 31 then
+		if target.y < 0 or target.y > 31 then
+			return false
+		end
+	end
 	local path = level:findPath(actor:getPosition(), target, actor, mover.mask, self.minDistance)
 
 	if not path then

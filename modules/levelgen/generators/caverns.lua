@@ -2,11 +2,41 @@ local BspGenerator = prism.levelgen.util.BspGenerator
 local RoomManager = prism.levelgen.util.RoomManager
 --- @class Cavern : Generator
 local Cavern = prism.levelgen.Generator:extend("Cavern")
-local DEBUG = false
+local DEBUG = true
+local LANDMARK_SLOTS = {
+	{ x = 25, y = 6 }, -- NE corner area
+	{ x = 7, y = 25 }, -- SW corner area
+}
+
+local LANDMARK_FACTORIES = { "Campsite", "WateringHole" }
+--- Build the 31×31 dummy room, then subdivide it with a couple of landmarks
+--- chosen deterministically from the zone seed so they're stable across visits.
+--- @param seed string
+--- @return LevelBuilder
+function Cavern:_buildDummyRoom(seed)
+	local builder = prism.LevelBuilder()
+	builder:rectangle("fill", 1, 1, 31, 31, prism.cells.Floor)
+	builder:rectangle("fill", 5, 5, 7, 7, prism.cells.Wall)
+	builder:rectangle("fill", 20, 20, 25, 25, prism.cells.Pit)
+
+	-- Deterministic landmark pick: same seed → same landmarks every time.
+	local rng = prism.RNG(seed)
+	for _, slot in ipairs(LANDMARK_SLOTS) do
+		local factoryName = LANDMARK_FACTORIES[rng:random(#LANDMARK_FACTORIES)]
+		local landmark = prism.actors[factoryName]()
+		builder:addActor(landmark, slot.x, slot.y)
+	end
+
+	return builder, {}
+end
 
 --- @param generatorInfo GeneratorInfo
 --- @param player Actor
 function Cavern:generate(generatorInfo, player, rng)
+	if DEBUG then
+		return self:_buildDummyRoom(generatorInfo.seed)
+	end
+
 	local seed = generatorInfo.seed
 	local w, h = generatorInfo.w, generatorInfo.h
 	local depth = generatorInfo.depth

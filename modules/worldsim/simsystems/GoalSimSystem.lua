@@ -32,7 +32,7 @@ function GoalSimSystem:onSimTick(record, ticksDelta, rng, worldSim)
 		else
 			if goal.state == "travelling" then
 				print(actor:getName() .. " is travelling")
-				if goal:isAtTarget(record) then
+				if goal:isAtTargetZone(record) then
 					goal:resolve(actor, record.storage, worldSim)
 					goal.state = "active"
 					goal.elapsed = 0

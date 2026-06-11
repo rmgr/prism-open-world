@@ -20,7 +20,7 @@ end
 function Goal:nextZone(actor, record, worldSim, rng)
 	local dx = self.targetZone.x - record.zoneX
 	local dy = self.targetZone.y - record.zoneY
-	if self:isAtTarget(record) then
+	if self:isAtTargetZone(record) then
 		return nil
 	end -- already there
 	local stepX = dx ~= 0 and (dx > 0 and 1 or -1) or 0
@@ -29,7 +29,7 @@ function Goal:nextZone(actor, record, worldSim, rng)
 end
 
 --- @param record ZoneRecord   the zone the actor currently sits in
-function Goal:isAtTarget(record)
+function Goal:isAtTargetZone(record)
 	return self.targetZone.x == record.zoneX and self.targetZone.y == record.zoneY
 end
 

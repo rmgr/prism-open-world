@@ -17,7 +17,7 @@ end
 --- @param controller Controller
 --- @return Action | boolean
 function PursueGoalBehaviour:run(level, actor, controller)
-	local goal = actor:get(prism.components.Goal) -- polymorphic
+	local goal = actor:get(prism.components.Goal)
 	if not goal then
 		return false
 	end -- fall through to wander/hunt

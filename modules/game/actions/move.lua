@@ -25,17 +25,21 @@ end
 function Move:perform(level, destination)
 	local volume = 5
 	local cell = level:getCell(destination.x, destination.y)
-	if cell then
-		local sound = cell:get(prism.components.Sound)
-		if sound then
-			volume = sound:getVolume()
+	if destination.x > 0 and destination.x <= 31 then
+		if destination.y > 0 and destination.y <= 31 then
+			if cell then
+				local sound = cell:get(prism.components.Sound)
+				if sound then
+					volume = sound:getVolume()
+				end
+			end
 		end
+		local isPlayer = self.owner:has(prism.components.PlayerController)
+		local emitSoundAction = prism.actions.EmitSound(self.owner, volume, isPlayer, isPlayer)
+		--	level:getSystem(prism.systems.SoundSystem):playSound(level, destination.x, destination.y, volume, self.owner)
+		level:moveActor(self.owner, destination)
+		level:tryPerform(emitSoundAction)
 	end
-	local isPlayer = self.owner:has(prism.components.PlayerController)
-	local emitSoundAction = prism.actions.EmitSound(self.owner, volume, isPlayer, isPlayer)
-	--	level:getSystem(prism.systems.SoundSystem):playSound(level, destination.x, destination.y, volume, self.owner)
-	level:moveActor(self.owner, destination)
-	level:tryPerform(emitSoundAction)
 end
 
 return Move
