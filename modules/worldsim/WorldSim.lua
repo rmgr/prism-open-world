@@ -1,23 +1,14 @@
 --- @class WorldSim
 --- @field zones SparseGrid              ZoneRecord per world-grid position
---- @field allActors ActorStorage        Every dormant actor in the world
+--- @field allActors ActorStorage        Every dormant actor in the world (the
+---                                       single in-memory actor graph — actors
+---                                       NEVER live in zone files)
 --- @field simSystems table              Ordered list of SimSystem instances
 --- @field currentTick integer           Advances once per player action
 --- @field zoneX integer                 Currently Active Zone X Position
 --- @field zoneY integer                 Currently Active Zone Y Position
 --- @field actorZoneIndex table<Actor, ZoneRecord>
 local WorldSim = prism.Object:extend("WorldSim")
-
--- The landmark types we sprinkle into each zone, and where in the 31×31 dummy
--- room they sit. Coordinates avoid the wall block (5..7) and pit (20..25).
--- One landmark is chosen per slot per zone, deterministically from the seed,
--- so a zone always has the same landmarks across visits.
-local LANDMARK_SLOTS = {
-	{ x = 25, y = 6 }, -- NE corner area
-	{ x = 7, y = 25 }, -- SW corner area
-}
-
-local LANDMARK_FACTORIES = { "Campsite", "WateringHole" }
 
 function WorldSim:__new()
 	self.zones = prism.SparseGrid()
@@ -50,47 +41,97 @@ function WorldSim:getOrCreateZone(zx, zy)
 end
 
 --- -------------------------------------------------------------------------
----  BOOT  —  pre-generate a grid of zones so the world exists from turn one
+---  ZONE FILES  (cells + roomGraph only — never actors; see ZoneFile)
+---
+---  worldsim is entirely generation-ignorant. The HOST builds a zone with
+---  whatever generator it likes and hands the builder to pregenerateZone;
+---  worldsim harvests its actors into memory and writes its CELLS to disk.
+---  Hydration is then one uniform path — read the file — for every zone,
+---  visited or not.
 --- -------------------------------------------------------------------------
 
---- @param w integer
---- @param h integer
---- @param originX integer
---- @param originY integer
-function WorldSim:pregenerateZones(w, h, originX, originY)
-	for zy = originY, originY + h - 1 do
-		for zx = originX, originX + w - 1 do
-			local record = self:getOrCreateZone(zx, zy)
+--- @param zx integer
+--- @param zy integer
+--- @return string
+--- @private
+function WorldSim:_zonePath(zx, zy)
+	return ("zone_%d_%d.lz4"):format(zx, zy)
+end
 
-			-- Build the dummy room (now including landmarks) and snapshot cells.
-			local builder = self:_buildDummyRoom(zx, zy, record.seed)
+--- @param zx integer
+--- @param zy integer
+--- @param cells table       list of { x, y, cell }
+--- @param roomGraph table?
+--- @private
+function WorldSim:_writeZone(zx, zy, cells, roomGraph)
+	local file = prism.worldsim.ZoneFile(cells, roomGraph)
+	local blob = prism.Object.serialize(file)
+	local packed = prism.messagepack.pack(blob)
+	local lz = love.data.compress("string", "lz4", packed)
+	love.filesystem.write(self:_zonePath(zx, zy), lz)
+end
 
-			-- Place the beetle in zone (0,1) on first generation.
-			if zx == 0 and zy == 1 then
-				local beetle = prism.actors.Beetle()
-				builder:addActor(beetle, 16, 16)
-			end
+--- @param zx integer
+--- @param zy integer
+--- @return table cells, table roomGraph
+--- @private
+function WorldSim:_readZone(zx, zy)
+	local lz = assert(love.filesystem.read(self:_zonePath(zx, zy)), "no zone file for (" .. zx .. "," .. zy .. ")")
+	local packed = love.data.decompress("string", "lz4", lz)
+	local blob = prism.messagepack.unpack(packed)
+	local file = prism.Object.deserialize(blob)
+	return file.cells, file.roomGraph
+end
 
-			record.cellOverrides = {}
-			for x, y, cell in builder:eachCell() do
-				record.cellOverrides[x .. "," .. y] = cell
-			end
+--- Collect a builder/level's cells into the serialisable { x, y, cell } list.
+--- @param source table   anything with eachCell()
+--- @return table
+--- @private
+function WorldSim:_collectCells(source)
+	local cells = {}
+	for x, y, cell in source:eachCell() do
+		cells[#cells + 1] = { x, y, cell }
+	end
+	return cells
+end
 
-			-- Snapshot actors (landmarks + beetle) into storage.
-			record.storage = prism.ActorStorage()
-			for actor in builder:query():iter() do
-				local pos = actor:getPosition()
-				if pos then
-					record.storage:addActor(actor)
-					self.allActors:addActor(actor)
-					self.actorZoneIndex[actor] = record
-				end
-			end
+--- -------------------------------------------------------------------------
+---  BOOT  —  the host hands us a freshly generated builder per zone
+--- -------------------------------------------------------------------------
 
-			record.hasBeenVisited = true
-			record.visitCount = 0
+--- Harvest the builder's generated actors (nest populations, landmarks, ...)
+--- into the in-memory dormant graph, and write the builder's cells to the
+--- zone file. The builder is discarded afterwards. worldsim never knows what
+--- kind of level this is — it only reads actors and cells off the builder.
+--- @param zx integer
+--- @param zy integer
+--- @param builder LevelBuilder   host-built; queried for actors and cells
+--- @param roomGraph table?       optional, written into the zone file
+function WorldSim:pregenerateZone(zx, zy, builder, roomGraph)
+	local record = self:getOrCreateZone(zx, zy)
+
+	for actor in builder:query():iter() do
+		local pos = actor:getPosition()
+		if pos then
+			record.storage:addActor(actor)
+			self.allActors:addActor(actor)
+			self.actorZoneIndex[actor] = record
 		end
 	end
+
+	self:_writeZone(zx, zy, self:_collectCells(builder), roomGraph)
+end
+
+--- Place an actor directly into a dormant zone's storage (boot seeding,
+--- scripted spawns). The actor should already carry a Position.
+--- @param actor Actor
+--- @param zx integer
+--- @param zy integer
+function WorldSim:addDormantActor(actor, zx, zy)
+	local record = self:getOrCreateZone(zx, zy)
+	record.storage:addActor(actor)
+	self.allActors:addActor(actor)
+	self.actorZoneIndex[actor] = record
 end
 
 --- -------------------------------------------------------------------------
@@ -124,7 +165,7 @@ function WorldSim:_tickZone(record, ticksDelta)
 end
 
 --- -------------------------------------------------------------------------
----  DEFLATION
+---  DEFLATION  —  player leaves a zone: actors → memory, cells → disk
 --- -------------------------------------------------------------------------
 
 function WorldSim:deflateZone(level, zoneX, zoneY)
@@ -146,14 +187,9 @@ function WorldSim:deflateZone(level, zoneX, zoneY)
 		self.actorZoneIndex[actor] = record
 	end
 
-	record.cellOverrides = {}
-	for x, y, cell in level:eachCell() do
-		record.cellOverrides[x .. "," .. y] = cell
-	end
-
-	if level.rooms then
-		record.roomGraph = level.rooms
-	end
+	-- Cells go to the zone file, not into the record. Continuous persistence:
+	-- the world's terrain is written to disk every time the player leaves.
+	self:_writeZone(zoneX, zoneY, self:_collectCells(level), level.rooms)
 
 	record.lastSimTick = self.currentTick
 	record.hasBeenVisited = true
@@ -165,28 +201,28 @@ function WorldSim:deflateZone(level, zoneX, zoneY)
 end
 
 --- -------------------------------------------------------------------------
----  HYDRATION
+---  HYDRATION  —  one uniform path: read the file, seat the live actors
 --- -------------------------------------------------------------------------
 
 function WorldSim:hydrateZone(zoneX, zoneY)
 	local record = self:getOrCreateZone(zoneX, zoneY)
 
-	if not record.hasBeenVisited then
-		local builder = self:_buildDummyRoom(zoneX, zoneY, record.seed)
-		return builder, {}
-	end
-
-	local builder = prism.LevelBuilder()
-
 	for _, system in ipairs(self.simSystems) do
 		system:onZoneHydrating(record, self)
 	end
 
-	for key, cell in pairs(record.cellOverrides) do
-		local x, y = key:match("(-?%d+),(-?%d+)")
-		builder:set(tonumber(x), tonumber(y), cell)
+	local builder = prism.LevelBuilder()
+
+	-- Cells come from the zone file — identical whether this is the first
+	-- visit (written at pregeneration) or a return (written at deflation).
+	local cells, roomGraph = self:_readZone(zoneX, zoneY)
+	for _, entry in ipairs(cells) do
+		builder:set(entry[1], entry[2], entry[3])
 	end
 
+	-- Seat the in-memory population. The zone file contains no actors by
+	-- design; the actors are whatever the sim has done to storage since the
+	-- zone was last live.
 	for _, actor in ipairs(record.storage:getAllActors()) do
 		local pos = actor:getPosition()
 		if pos then
@@ -198,7 +234,7 @@ function WorldSim:hydrateZone(zoneX, zoneY)
 
 	record.storage = prism.ActorStorage()
 
-	return builder, record.roomGraph or {}
+	return builder, roomGraph or {}
 end
 
 --- -------------------------------------------------------------------------
@@ -213,44 +249,45 @@ function WorldSim:moveActor(actor, targetZoneX, targetZoneY)
 	end
 
 	fromZone.storage:removeActor(actor)
+
 	if targetZoneX == self.zoneX and targetZoneY == self.zoneY then
+		-- Entering the player's LIVE zone: the actor stops being dormant, so
+		-- it must leave the dormant bookkeeping entirely — findActor's
+		-- contract is "nil = in the active level".
+		self.allActors:removeActor(actor)
+		self.actorZoneIndex[actor] = nil
+
 		local x = 0
 		local y = 0
 		local w, h = Game.level:getSize()
 		if fromZone.zoneX > self.zoneX then
-			--coming from right
 			x = w - 1
 			y = h / 2
 		elseif fromZone.zoneX < self.zoneX then
-			--coming from left
 			x = 0
 			y = h / 2
 		elseif fromZone.zoneY > self.zoneY then
-			--coming from below
 			x = w / 2
 			y = h - 1
 		elseif fromZone.zoneY < self.zoneY then
-			-- coming from top
 			x = w / 2
 			y = 0
 		end
 		x = math.floor(x)
 		y = math.floor(y)
 		Game.level:addActor(actor, x, y)
-	else
-		-- allActors stays in sync: actor is dormant before and after, so it remains
-		-- a member; we only re-point its zone index.
-		actor:give(prism.components.Position(prism.Vector2(16, 16)))
-
-		toZone.storage:addActor(actor)
+		return
 	end
-	self.actorZoneIndex[actor] = toZone
 
-	print("moved actor to (" .. targetZoneX .. "," .. targetZoneY .. ")")
+	-- Dormant → dormant: allActors membership unchanged; only the zone
+	-- index and storage move.
+	actor:give(prism.components.Position(prism.Vector2(16, 16)))
+	toZone.storage:addActor(actor)
+	self.actorZoneIndex[actor] = toZone
 end
 
 function WorldSim:findActor(actor)
-	return self.actorZoneIndex[actor]
+	return self.actorZoneIndex[actor] -- nil = in the active level
 end
 
 function WorldSim:queryAll(component)
@@ -266,29 +303,6 @@ function WorldSim:queryAll(component)
 		end
 	end
 	return results
-end
-
---- Build the 31×31 dummy room, then subdivide it with a couple of landmarks
---- chosen deterministically from the zone seed so they're stable across visits.
---- @param zoneX integer
---- @param zoneY integer
---- @param seed string
---- @return LevelBuilder
-function WorldSim:_buildDummyRoom(zoneX, zoneY, seed)
-	local builder = prism.LevelBuilder()
-	builder:rectangle("fill", 1, 1, 31, 31, prism.cells.Floor)
-	builder:rectangle("fill", 5, 5, 7, 7, prism.cells.Wall)
-	builder:rectangle("fill", 20, 20, 25, 25, prism.cells.Pit)
-
-	-- Deterministic landmark pick: same seed → same landmarks every time.
-	local rng = prism.RNG(seed)
-	for _, slot in ipairs(LANDMARK_SLOTS) do
-		local factoryName = LANDMARK_FACTORIES[rng:random(#LANDMARK_FACTORIES)]
-		local landmark = prism.actors[factoryName]()
-		builder:addActor(landmark, slot.x, slot.y)
-	end
-
-	return builder
 end
 
 return WorldSim

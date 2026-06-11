@@ -44,17 +44,49 @@ function Game:__new(seed)
 	)
 	self.factions.OlmFaction:addRelation(prism.relations.FactionRelationshipRelation(-100), self.factions.OlmFaction)
 	self.factions.OlmFaction:addRelation(prism.relations.FactionRelationshipRelation(-100), self.factions.BeetleFaction)
-
 	for _, faction in pairs(self.factions) do
 		faction:addRelation(prism.relations.FactionRelationshipRelation(-100), self.factions.FireFaction)
 	end
 end
 
-function Game:pregenerateZones()
-	-- Pre-generate a 3×3 world grid so all zones exist from the start.
-	-- The beetle is placed in zone (0,1) by pregenerateZones.
-	self.worldSim:pregenerateZones(3, 3, 0, 0)
+--- Build one zone's terrain with this game's own generator. worldsim is never
+--- told how this happens — it just receives the builder. Cavern draws its
+--- randomness from the passed RNG, so seeding it from the zone seed keeps the
+--- terrain stable across regenerations. nil player: the player is placed by
+--- generateNextFloor, never baked into a zone.
+--- @param zx integer
+--- @param zy integer
+--- @return LevelBuilder builder, table rooms
+function Game:_buildZone(zx, zy)
+	local seed = self:getZoneSeed(zx, zy)
+	return prism.generators
+		.Cavern()
+		:generate({ w = 120, h = 120, depth = self.depth, seed = seed }, nil, prism.RNG(seed))
 end
+
+function Game:pregenerateZones()
+	-- Zone files persist in the LÖVE save directory across sessions, so a new
+	-- game must not inherit a previous world's terrain. Wipe any stale files.
+	for _, name in ipairs(love.filesystem.getDirectoryItems("")) do
+		if name:match("^zone_%-?%d+_%-?%d+%.lz4$") then
+			love.filesystem.remove(name)
+		end
+	end
+
+	for zy = 0, 10 do
+		for zx = 0, 10 do
+			local builder, rooms = self:_buildZone(zx, zy)
+			self.worldSim:pregenerateZone(zx, zy, builder, rooms)
+		end
+	end
+
+	-- Seed the world's starting fauna explicitly, so worldsim stays ignorant
+	-- of species and generation stays purely terrain + native spawns.
+	local beetle = prism.actors.Beetle()
+	beetle:give(prism.components.Position(prism.Vector2(16, 16)))
+	self.worldSim:addDormantActor(beetle, 0, 1)
+end
+
 function Game:getLevelSeed()
 	return tostring(self.rng:random())
 end
@@ -64,9 +96,9 @@ function Game:getZoneSeed(zoneX, zoneY)
 end
 
 function Game:generateNextFloor()
-	local builder = self.worldSim:hydrateZone(self.worldSim.zoneX, self.worldSim.zoneY)
+	local builder, rooms = self.worldSim:hydrateZone(self.worldSim.zoneX, self.worldSim.zoneY)
 	builder:addActor(self.player, 12, 12)
-	return builder
+	return builder, rooms
 end
 
 _G.Game = Game(tostring(os.time()))
