@@ -23,7 +23,7 @@ prism.registerActor("WateringHole", function()
 		prism.components.Position(),
 		prism.components.Drawable({ index = "W", color = prism.Color4.BLUE, layer = LANDMARK_LAYER }),
 		prism.components.Landmark("watering_hole"),
-		prism.components.WaterSource(),
+		prism.components.Water(),
 		prism.components.FoodSource(),
 	})
 end)

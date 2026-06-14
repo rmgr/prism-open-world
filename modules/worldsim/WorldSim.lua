@@ -1,12 +1,10 @@
 --- @class WorldSim
---- @field zones SparseGrid              ZoneRecord per world-grid position
---- @field allActors ActorStorage        Every dormant actor in the world (the
----                                       single in-memory actor graph — actors
----                                       NEVER live in zone files)
---- @field simSystems table              Ordered list of SimSystem instances
---- @field currentTick integer           Advances once per player action
---- @field zoneX integer                 Currently Active Zone X Position
---- @field zoneY integer                 Currently Active Zone Y Position
+--- @field zones SparseGrid
+--- @field allActors ActorStorage
+--- @field simSystems table
+--- @field currentTick integer
+--- @field zoneX integer
+--- @field zoneY integer
 --- @field actorZoneIndex table<Actor, ZoneRecord>
 local WorldSim = prism.Object:extend("WorldSim")
 
@@ -40,16 +38,6 @@ function WorldSim:getOrCreateZone(zx, zy)
 	return record
 end
 
---- -------------------------------------------------------------------------
----  ZONE FILES  (cells + roomGraph only — never actors; see ZoneFile)
----
----  worldsim is entirely generation-ignorant. The HOST builds a zone with
----  whatever generator it likes and hands the builder to pregenerateZone;
----  worldsim harvests its actors into memory and writes its CELLS to disk.
----  Hydration is then one uniform path — read the file — for every zone,
----  visited or not.
---- -------------------------------------------------------------------------
-
 --- @param zx integer
 --- @param zy integer
 --- @return string
@@ -60,7 +48,7 @@ end
 
 --- @param zx integer
 --- @param zy integer
---- @param cells table       list of { x, y, cell }
+--- @param cells table
 --- @param roomGraph table?
 --- @private
 function WorldSim:_writeZone(zx, zy, cells, roomGraph)
@@ -90,19 +78,12 @@ end
 function WorldSim:_collectCells(source)
 	local cells = {}
 	for x, y, cell in source:eachCell() do
-		cells[#cells + 1] = { x, y, cell }
+		local name = cell.__factory:match("[^.]+$")
+		cells[#cells + 1] = { x, y, name }
 	end
 	return cells
 end
 
---- -------------------------------------------------------------------------
----  BOOT  —  the host hands us a freshly generated builder per zone
---- -------------------------------------------------------------------------
-
---- Harvest the builder's generated actors (nest populations, landmarks, ...)
---- into the in-memory dormant graph, and write the builder's cells to the
---- zone file. The builder is discarded afterwards. worldsim never knows what
---- kind of level this is — it only reads actors and cells off the builder.
 --- @param zx integer
 --- @param zy integer
 --- @param builder LevelBuilder   host-built; queried for actors and cells
@@ -134,10 +115,6 @@ function WorldSim:addDormantActor(actor, zx, zy)
 	self.actorZoneIndex[actor] = record
 end
 
---- -------------------------------------------------------------------------
----  SIM TICK
---- -------------------------------------------------------------------------
-
 --- @param activeZoneX integer
 --- @param activeZoneY integer
 function WorldSim:advance(activeZoneX, activeZoneY)
@@ -163,10 +140,6 @@ function WorldSim:_tickZone(record, ticksDelta)
 		system:onSimTick(record, ticksDelta, rng, self)
 	end
 end
-
---- -------------------------------------------------------------------------
----  DEFLATION  —  player leaves a zone: actors → memory, cells → disk
---- -------------------------------------------------------------------------
 
 function WorldSim:deflateZone(level, zoneX, zoneY)
 	local record = self:getOrCreateZone(zoneX, zoneY)
@@ -200,10 +173,6 @@ function WorldSim:deflateZone(level, zoneX, zoneY)
 	end
 end
 
---- -------------------------------------------------------------------------
----  HYDRATION  —  one uniform path: read the file, seat the live actors
---- -------------------------------------------------------------------------
-
 function WorldSim:hydrateZone(zoneX, zoneY)
 	local record = self:getOrCreateZone(zoneX, zoneY)
 
@@ -213,11 +182,12 @@ function WorldSim:hydrateZone(zoneX, zoneY)
 
 	local builder = prism.LevelBuilder()
 
-	-- Cells come from the zone file — identical whether this is the first
-	-- visit (written at pregeneration) or a return (written at deflation).
 	local cells, roomGraph = self:_readZone(zoneX, zoneY)
 	for _, entry in ipairs(cells) do
-		builder:set(entry[1], entry[2], entry[3])
+		if entry[3] then
+			local cell = prism.cells[entry[3]]()
+			builder:set(entry[1], entry[2], cell)
+		end
 	end
 
 	-- Seat the in-memory population. The zone file contains no actors by
@@ -236,10 +206,6 @@ function WorldSim:hydrateZone(zoneX, zoneY)
 
 	return builder, roomGraph or {}
 end
-
---- -------------------------------------------------------------------------
----  HELPERS
---- -------------------------------------------------------------------------
 
 function WorldSim:moveActor(actor, targetZoneX, targetZoneY)
 	local fromZone = self.actorZoneIndex[actor]

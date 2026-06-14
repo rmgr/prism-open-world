@@ -17,36 +17,6 @@ function Game:__new(seed)
 	self.debug = false
 
 	self.worldSim = WorldSim()
-
-	self.factions = {
-		PlayerFaction = prism.factions.PlayerFaction(),
-		KoboldFaction = prism.factions.KoboldFaction(),
-		OlmFaction = prism.factions.OlmFaction(),
-		BeetleFaction = prism.factions.BeetleFaction(),
-		SalamanderFaction = prism.factions.SalamanderFaction(),
-		FireFaction = prism.factions.FireFaction(),
-	}
-
-	self.factions.PlayerFaction:addRelation(
-		prism.relations.FactionRelationshipRelation(-100),
-		self.factions.KoboldFaction
-	)
-	self.factions.PlayerFaction:addRelation(
-		prism.relations.FactionRelationshipRelation(-100),
-		self.factions.SalamanderFaction
-	)
-	self.factions.BeetleFaction:addRelation(prism.relations.FactionRelationshipRelation(0), self.factions.KoboldFaction)
-	self.factions.PlayerFaction:addRelation(prism.relations.FactionRelationshipRelation(-100), self.factions.OlmFaction)
-	self.factions.OlmFaction:addRelation(prism.relations.FactionRelationshipRelation(-100), self.factions.KoboldFaction)
-	self.factions.OlmFaction:addRelation(
-		prism.relations.FactionRelationshipRelation(-100),
-		self.factions.SalamanderFaction
-	)
-	self.factions.OlmFaction:addRelation(prism.relations.FactionRelationshipRelation(-100), self.factions.OlmFaction)
-	self.factions.OlmFaction:addRelation(prism.relations.FactionRelationshipRelation(-100), self.factions.BeetleFaction)
-	for _, faction in pairs(self.factions) do
-		faction:addRelation(prism.relations.FactionRelationshipRelation(-100), self.factions.FireFaction)
-	end
 end
 
 --- Build one zone's terrain with this game's own generator. worldsim is never
@@ -73,16 +43,20 @@ function Game:pregenerateZones()
 		end
 	end
 
-	for zy = 0, 10 do
-		for zx = 0, 10 do
+	for zy = 0, 3 do
+		for zx = 0, 3 do
 			local builder, rooms = self:_buildZone(zx, zy)
 			self.worldSim:pregenerateZone(zx, zy, builder, rooms)
 		end
 	end
 
-	-- Seed the world's starting fauna explicitly, so worldsim stays ignorant
-	-- of species and generation stays purely terrain + native spawns.
 	local beetle = prism.actors.Beetle()
+	beetle:give(prism.components.Position(prism.Vector2(16, 16)))
+	self.worldSim:addDormantActor(beetle, 0, 1)
+	beetle = prism.actors.Beetle()
+	beetle:give(prism.components.Position(prism.Vector2(16, 16)))
+	self.worldSim:addDormantActor(beetle, 0, 1)
+	beetle = prism.actors.Beetle()
 	beetle:give(prism.components.Position(prism.Vector2(16, 16)))
 	self.worldSim:addDormantActor(beetle, 0, 1)
 end
