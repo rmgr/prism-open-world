@@ -2,6 +2,3 @@
 	path = prism
 	url = https://github.com/PrismRL/prism.git
 	branch = master
-[submodule "modules/faction"]
-	path = modules/faction
-	url = ssh://git@git.rmgr.dev/rmgr/prism-factions
