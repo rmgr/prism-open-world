@@ -31,6 +31,22 @@ prism.registerActor("Beetle", function()
 			entry = prism.actors.MeatBrick(),
 		}),
 		prism.components.Beetle(),
+		prism.components.Satiety(200),
 		prism.components.Speed(50),
+		prism.components.Needs({
+			safety = {
+				threshold = 0.5,
+				score = prism.needscomparators.HpValueComparator(),
+				goal = prism.needsactions.SeekRestAction(),
+			},
+			hunger = {
+				score = prism.needscomparators.SatietyValueComparator(),
+				goal = prism.needsactions.SeekFoodAction(),
+			},
+			rest = {
+				score = prism.needscomparators.ConstantComparator(0.3),
+				goal = prism.needsactions.SeekRestAction(),
+			},
+		}),
 	})
 end)

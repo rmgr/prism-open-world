@@ -8,9 +8,9 @@ local LANDMARK_SLOTS = {
 	{ x = 7, y = 25 }, -- SW corner area
 }
 
+-- One factory per slot, in order — guarantees each zone gets one of each.
 local LANDMARK_FACTORIES = { "Campsite", "WateringHole" }
---- Build the 31×31 dummy room, then subdivide it with a couple of landmarks
---- chosen deterministically from the zone seed so they're stable across visits.
+--- Build the 31×31 dummy room with one landmark per slot, each a distinct type.
 --- @param seed string
 --- @return LevelBuilder
 function Cavern:_buildDummyRoom(seed)
@@ -19,11 +19,8 @@ function Cavern:_buildDummyRoom(seed)
 	builder:rectangle("fill", 5, 5, 7, 7, prism.cells.Wall)
 	builder:rectangle("fill", 20, 20, 25, 25, prism.cells.Pit)
 
-	-- Deterministic landmark pick: same seed → same landmarks every time.
-	local rng = prism.RNG(seed)
-	for _, slot in ipairs(LANDMARK_SLOTS) do
-		local factoryName = LANDMARK_FACTORIES[rng:random(#LANDMARK_FACTORIES)]
-		local landmark = prism.actors[factoryName]()
+	for i, slot in ipairs(LANDMARK_SLOTS) do
+		local landmark = prism.actors[LANDMARK_FACTORIES[i]]()
 		builder:addActor(landmark, slot.x, slot.y)
 	end
 

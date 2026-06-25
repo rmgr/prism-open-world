@@ -33,7 +33,7 @@ function Goal:isAtTargetZone(record)
 	return self.targetZone.x == record.zoneX and self.targetZone.y == record.zoneY
 end
 
-function Goal:tryResolve(actor, storage, worldSim)
+function Goal:resolve(actor, storage, worldSim)
 	return true
 end
 

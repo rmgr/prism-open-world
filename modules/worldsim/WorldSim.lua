@@ -12,11 +12,13 @@ function WorldSim:__new()
 	self.zones = prism.SparseGrid()
 	self.allActors = prism.ActorStorage()
 	self.currentTick = 0
+	self.tickInterval = 5
 	self.zoneX = 0
 	self.zoneY = 0
 	self.actorZoneIndex = {}
 
 	self.simSystems = {
+		prism.simsystems.SatietySimSystem(),
 		prism.simsystems.GoalSimSystem(),
 	}
 
@@ -119,13 +121,14 @@ end
 --- @param activeZoneY integer
 function WorldSim:advance(activeZoneX, activeZoneY)
 	self.currentTick = self.currentTick + 1
-
-	for zx, zy, record in self.zones:each() do
-		if zx ~= activeZoneX or zy ~= activeZoneY then
-			local delta = self.currentTick - record.lastSimTick
-			if delta > 0 then
-				self:_tickZone(record, delta)
-				record.lastSimTick = self.currentTick
+	if self.currentTick % self.tickInterval == 0 then
+		for zx, zy, record in self.zones:each() do
+			if zx ~= activeZoneX or zy ~= activeZoneY then
+				local delta = self.currentTick - record.lastSimTick
+				if delta > 0 then
+					self:_tickZone(record, delta)
+					record.lastSimTick = self.currentTick
+				end
 			end
 		end
 	end
@@ -269,6 +272,47 @@ function WorldSim:queryAll(component)
 		end
 	end
 	return results
+end
+
+--- The only sanctioned way to assign a goal. Removes any existing goal first,
+--- because give() does NOT auto-replace sibling subclasses of Goal.
+--- @param actor Actor
+--- @param newGoal Goal?
+function prism.worldsim:setGoal(actor, newGoal)
+	local existing = actor:get(prism.components.Goal)
+	if existing then
+		actor:remove(existing)
+	end
+	if newGoal then
+		actor:give(newGoal)
+	end
+end
+
+--- Pick the highest-scoring need above its threshold and return its goal.
+--- Returns nil when the actor has no Needs component or no need clears its threshold.
+--- Reads only components — headless safe.
+--- @param actor Actor
+--- @param worldSim WorldSim
+--- @param rng RNG
+--- @param record ZoneRecord   the zone the actor currently sits in
+--- @return Goal?
+function prism.worldsim:pickNextGoal(actor, worldSim, rng, record)
+	local needs = actor:get(prism.components.Needs)
+	if not needs then
+		return nil
+	end
+
+	local best, bestScore = nil, -1
+	for _, entry in pairs(needs.needs) do
+		local threshold = entry.threshold or 0
+		local score = entry.score:compare(actor)
+		if score >= threshold and score > bestScore then
+			bestScore = score
+			best = entry
+		end
+	end
+
+	return best and best.goal:evaluate(actor, worldSim, rng, record) or nil
 end
 
 return WorldSim

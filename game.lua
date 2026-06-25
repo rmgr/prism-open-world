@@ -43,20 +43,14 @@ function Game:pregenerateZones()
 		end
 	end
 
-	for zy = 0, 3 do
-		for zx = 0, 3 do
+	for zy = 0, 1 do
+		for zx = 0, 1 do
 			local builder, rooms = self:_buildZone(zx, zy)
 			self.worldSim:pregenerateZone(zx, zy, builder, rooms)
 		end
 	end
 
 	local beetle = prism.actors.Beetle()
-	beetle:give(prism.components.Position(prism.Vector2(16, 16)))
-	self.worldSim:addDormantActor(beetle, 0, 1)
-	beetle = prism.actors.Beetle()
-	beetle:give(prism.components.Position(prism.Vector2(16, 16)))
-	self.worldSim:addDormantActor(beetle, 0, 1)
-	beetle = prism.actors.Beetle()
 	beetle:give(prism.components.Position(prism.Vector2(16, 16)))
 	self.worldSim:addDormantActor(beetle, 0, 1)
 end
